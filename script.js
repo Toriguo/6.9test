@@ -4,6 +4,78 @@
   /* ===== Supabase API 快捷引用 ===== */
   const sb = window.supabaseApi;
 
+  /* ===== 公共工具函数 ===== */
+  function getMySlug() {
+    return localStorage.getItem('my_galaxy_slug');
+  }
+
+  /* ===== 好友星星状态（供全局共享）===== */
+  const friendPlanetsOrbit = document.getElementById('friend-planets-orbit');
+  let connectedFriends = {};
+
+  function computeFriendStarPosition(index, total) {
+    const orbit = friendPlanetsOrbit;
+    if (!orbit) return { left: '50%', top: '50%' };
+    const rect = orbit.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const radiusX = Math.min(rect.width * 0.42, 300);
+    const radiusY = Math.min(rect.height * 0.35, 240);
+    const angle = (index / Math.max(total, 1)) * Math.PI * 2 - Math.PI / 2;
+    const jitterX = ((Math.sin(index * 3.7) * 30) + (Math.cos(index * 2.1) * 25));
+    const jitterY = ((Math.cos(index * 1.7) * 20) + (Math.sin(index * 4.3) * 15));
+    const px = cx + Math.cos(angle) * radiusX + jitterX;
+    const py = cy + Math.sin(angle) * radiusY + jitterY;
+    return {
+      left: (px / rect.width * 100) + '%',
+      top: (py / rect.height * 100) + '%'
+    };
+  }
+
+  function renderFriendPlanet(friendData) {
+    if (!friendPlanetsOrbit) return;
+    if (!friendData || !friendData.slug) return;
+    if (friendPlanetsOrbit.querySelector('[data-friend-slug="' + friendData.slug + '"]')) return;
+
+    const node = document.createElement('div');
+    node.className = 'friend-star-node';
+    node.setAttribute('data-friend-slug', friendData.slug);
+    node.title = '点击查看「' + (friendData.space_id || friendData.id) + '」';
+    node.style.setProperty('--star-color', friendData.planetColor || '#88ccff');
+
+    const total = Object.keys(connectedFriends).length + 1;
+    const pos = computeFriendStarPosition(Object.keys(connectedFriends).length, total);
+    node.style.left = pos.left;
+    node.style.top = pos.top;
+
+    node.addEventListener('click', function () {
+      window._openFriendProfile(Object.assign({}, friendData, { isConnected: true }));
+    });
+
+    friendPlanetsOrbit.appendChild(node);
+    connectedFriends[friendData.slug] = friendData;
+    repositionFriendPlanets();
+  }
+
+  function removeFriendPlanet(friendSlug) {
+    if (!friendPlanetsOrbit || !friendSlug) return;
+    const node = friendPlanetsOrbit.querySelector('[data-friend-slug="' + friendSlug + '"]');
+    if (node) node.remove();
+    delete connectedFriends[friendSlug];
+    repositionFriendPlanets();
+  }
+
+  function repositionFriendPlanets() {
+    if (!friendPlanetsOrbit) return;
+    const nodes = friendPlanetsOrbit.querySelectorAll('.friend-star-node');
+    const total = nodes.length;
+    nodes.forEach(function (node, i) {
+      const pos = computeFriendStarPosition(i, total);
+      node.style.left = pos.left;
+      node.style.top = pos.top;
+    });
+  }
+
   /* ===== 星空背景 ===== */
   const starfield = document.getElementById('starfield');
   const ctxStars = starfield.getContext('2d');
@@ -762,9 +834,66 @@
         welcomeText.textContent = '探索TA的星际旅程吧！✨';
       }
 
+      // 加载已连接好友行星
+      loadConnectedFriends();
+
     } catch (err) {
       console.error('加载 Supabase 数据失败:', err);
       renderPlanets();
+    }
+  }
+
+  /**
+   * 加载所有已连接好友的行星到 hero 区
+   */
+  async function loadConnectedFriends() {
+    const mySlug = getMySlug();
+    if (!mySlug) return;
+    try {
+      const { data, error } = await sb.getAllConnectedFriends(mySlug);
+      if (error || !data || data.length === 0) return;
+
+      const colors = ['#88ccff', '#ff88cc', '#88ffaa', '#ffcc88', '#ff8888', '#88ffcc', '#cc88ff', '#ffcc66'];
+
+      for (let i = 0; i < data.length; i++) {
+        const p = data[i];
+        if (!p || !p.slug) continue;
+
+        let planetName = '';
+        let planetColor = colors[i % colors.length];
+        let planetCount = 0;
+
+        try {
+          const { data: planets } = await sb.getPlanets(p.slug);
+          if (planets && planets.length > 0) {
+            planetCount = planets.length;
+            const publicIdx = p.public_planet_index !== null && p.public_planet_index !== undefined
+              ? p.public_planet_index
+              : -1;
+            if (publicIdx >= 0 && planets[publicIdx] && planets[publicIdx].name) {
+              planetName = planets[publicIdx].name;
+            } else if (planets[0] && planets[0].name) {
+              planetName = planets[0].name;
+            }
+          }
+        } catch (e) {}
+
+        const friendData = {
+          slug: p.slug,
+          space_id: p.space_id || p.slug,
+          id: p.space_id || p.slug,
+          avatar_url: p.avatar_url || 'imgs/3.svg',
+          planetName: planetName,
+          planetColor: planetColor,
+          portfolio: [],
+          allPortfolio: [],
+          isConnected: true,
+          planetCount: planetCount,
+        };
+        renderFriendPlanet(friendData);
+      }
+    } catch (err) {
+      console.warn('加载已连接好友行星失败:', err);
     }
   }
 
@@ -1043,90 +1172,13 @@
     const collisionOverlay = document.getElementById('planet-collision-overlay');
     const collisionCanvas = document.getElementById('collision-canvas');
     const collisionCaption = document.getElementById('collision-caption');
-    const friendPlanetsOrbit = document.getElementById('friend-planets-orbit');
 
     const friendPlanetColors = ['#88ccff', '#ff88cc', '#88ffaa', '#ffcc88', '#ff8888', '#88ffcc', '#cc88ff', '#ffcc66'];
 
-    // hero 区已连接好友行星集合（key=slug）
-    let connectedFriends = {};
-
-    // 星轨粒子系统
+    // 星轨粒子系统（好友星系弹窗动画）
     let galaxyParticles = [];
     let galaxyTime = 0;
     let galaxyAnimId = null;
-
-    function getMySlug() {
-      return localStorage.getItem('my_galaxy_slug');
-    }
-
-    // ===== hero 区好友星星管理 =====
-    function computeFriendStarPosition(index, total) {
-      const orbit = friendPlanetsOrbit;
-      if (!orbit) return { left: '50%', top: '50%' };
-      const rect = orbit.getBoundingClientRect();
-      const cx = rect.width / 2;
-      const cy = rect.height / 2;
-      // 星星散布在整个 hero 区域，偏向上方
-      const radiusX = Math.min(rect.width * 0.42, 300);
-      const radiusY = Math.min(rect.height * 0.35, 240);
-      const angle = (index / Math.max(total, 1)) * Math.PI * 2 - Math.PI / 2;
-      // 随机偏移让星星不那么整齐
-      const jitterX = ((Math.sin(index * 3.7) * 30) + (Math.cos(index * 2.1) * 25));
-      const jitterY = ((Math.cos(index * 1.7) * 20) + (Math.sin(index * 4.3) * 15));
-      const px = cx + Math.cos(angle) * radiusX + jitterX;
-      const py = cy + Math.sin(angle) * radiusY + jitterY;
-      return {
-        left: (px / rect.width * 100) + '%',
-        top: (py / rect.height * 100) + '%'
-      };
-    }
-
-    function renderFriendPlanet(friendData) {
-      if (!friendPlanetsOrbit) return;
-      if (!friendData || !friendData.slug) return;
-      if (friendPlanetsOrbit.querySelector('[data-friend-slug="' + friendData.slug + '"]')) return;
-
-      const node = document.createElement('div');
-      node.className = 'friend-star-node';
-      node.setAttribute('data-friend-slug', friendData.slug);
-      node.title = '点击查看「' + (friendData.space_id || friendData.id) + '」';
-      node.style.setProperty('--star-color', friendData.planetColor || '#88ccff');
-
-      const total = Object.keys(connectedFriends).length + 1;
-      const pos = computeFriendStarPosition(Object.keys(connectedFriends).length, total);
-      node.style.left = pos.left;
-      node.style.top = pos.top;
-
-      node.addEventListener('click', function () {
-        if (friendModal && friendData) {
-          openFriendProfile(Object.assign({}, friendData, { isConnected: true }));
-        }
-      });
-
-      friendPlanetsOrbit.appendChild(node);
-      connectedFriends[friendData.slug] = friendData;
-
-      repositionFriendPlanets();
-    }
-
-    function removeFriendPlanet(friendSlug) {
-      if (!friendPlanetsOrbit || !friendSlug) return;
-      const node = friendPlanetsOrbit.querySelector('[data-friend-slug="' + friendSlug + '"]');
-      if (node) node.remove();
-      delete connectedFriends[friendSlug];
-      repositionFriendPlanets();
-    }
-
-    function repositionFriendPlanets() {
-      if (!friendPlanetsOrbit) return;
-      const nodes = friendPlanetsOrbit.querySelectorAll('.friend-star-node');
-      const total = nodes.length;
-      nodes.forEach(function (node, i) {
-        const pos = computeFriendStarPosition(i, total);
-        node.style.left = pos.left;
-        node.style.top = pos.top;
-      });
-    }
 
     // 将原始 planets（按索引）转成 portfolio 格式，
     // includeAll=false 时仅返回公开那颗，true 时返回所有星球（已连接用户使用）
@@ -1372,25 +1424,36 @@
       });
     }
 
+    // 当前弹窗中待处理的连接请求（若存在则显示接受/拒绝按钮）
+    var currentIncomingRequest = null;
+
     function setConnectButtonState(status) {
-      // status: 'default' | 'pending' | 'connected' | 'rejected'
+      // status: 'default' | 'pending' | 'connected' | 'rejected' | 'incoming'
       var isConnected = status === 'connected';
       var isPending = status === 'pending';
       var isRejected = status === 'rejected';
+      var isIncoming = status === 'incoming';
 
-      friendConnectBtn.disabled = isConnected || isPending || collisionPlaying;
-      friendConnectBtn.classList.toggle('connected', isConnected);
-      friendConnectBtn.classList.toggle('pending', isPending);
-      friendConnectBtn.classList.toggle('connecting', false);
+      friendConnectBtn.classList.remove('connected', 'pending', 'connecting', 'incoming');
+      friendDisconnectBtn.classList.remove('incoming', 'visible');
 
       if (isConnected) {
+        friendConnectBtn.disabled = true;
+        friendConnectBtn.classList.add('connected');
         friendConnectBtn.textContent = '✦ 已连接';
       } else if (isPending) {
+        friendConnectBtn.disabled = true;
+        friendConnectBtn.classList.add('pending');
         friendConnectBtn.textContent = '等待回应...';
-      } else if (isRejected) {
-        friendConnectBtn.textContent = '✦ 申请连接';
+      } else if (isIncoming) {
+        // 被申请模式：显示接受/拒绝按钮
         friendConnectBtn.disabled = false;
+        friendConnectBtn.classList.add('incoming');
+        friendConnectBtn.textContent = '✦ 接受连接';
+        friendDisconnectBtn.classList.add('incoming', 'visible');
+        friendDisconnectBtn.textContent = '✕ 拒绝';
       } else {
+        friendConnectBtn.disabled = false;
         friendConnectBtn.textContent = '✦ 申请连接';
       }
     }
@@ -1411,9 +1474,10 @@
       }
     }
 
-    function openFriendProfile(friend) {
+    function openFriendProfile(friend, incomingRequest) {
       if (!friend || collisionPlaying) return;
       currentSearchedFriend = friend;
+      currentIncomingRequest = incomingRequest || null;
 
       friendProfileAvatar.src = friend.avatar_url || 'imgs/3.svg';
       friendProfileId.textContent = friend.space_id || friend.id;
@@ -1430,39 +1494,56 @@
 
       renderFriendGalaxy(friend.portfolio || []);
 
-      // 检查连接请求状态
-      if (!!friend.isConnected) {
-        setConnectButtonState('connected');
+      // 如果收到的是 incoming 请求 → 直接显示接受/拒绝按钮
+      if (currentIncomingRequest) {
+        setConnectButtonState('incoming');
       } else {
-        // 异步检查是否有 pending 请求
+        // 异步刷新当前连接状态（优先检查真正的连接，再检查申请状态）
         var mySlug = getMySlug();
         if (mySlug && friend.slug) {
-          sb.checkMySentRequest(mySlug, friend.slug).then(function (result) {
-            if (result.status === 'pending') {
-              currentSearchedFriend.pendingRequest = true;
-              setConnectButtonState('pending');
-            } else if (result.status === 'accepted') {
+          sb.checkConnection(mySlug, friend.slug).then(function (conn) {
+            if (conn.connected) {
               currentSearchedFriend.isConnected = true;
               currentSearchedFriend.pendingRequest = false;
               setConnectButtonState('connected');
-              // 切换到全部星球
               if (currentSearchedFriend.allPortfolio && currentSearchedFriend.allPortfolio.length > 0) {
                 currentSearchedFriend.portfolio = currentSearchedFriend.allPortfolio;
                 renderFriendGalaxy(currentSearchedFriend.portfolio);
+                friendProfileHint.textContent = '✦ 全部 ' + currentSearchedFriend.portfolio.length + ' 颗星球，点击可查看图片';
               }
-              // 在 hero 区显示星球
               try { renderFriendPlanet(currentSearchedFriend); } catch (e) {}
-              // 如果请求刚被接受且弹窗开着，开始轮询
-              startSentRequestPolling();
-            } else if (result.status === 'rejected') {
-              currentSearchedFriend.pendingRequest = false;
-              setConnectButtonState('default');
             } else {
-              setConnectButtonState('default');
+              currentSearchedFriend.isConnected = false;
+              sb.checkMySentRequest(mySlug, friend.slug).then(function (result) {
+                if (result.status === 'pending') {
+                  currentSearchedFriend.pendingRequest = true;
+                  setConnectButtonState('pending');
+                } else if (result.status === 'accepted') {
+                  currentSearchedFriend.isConnected = true;
+                  currentSearchedFriend.pendingRequest = false;
+                  setConnectButtonState('connected');
+                  if (currentSearchedFriend.allPortfolio && currentSearchedFriend.allPortfolio.length > 0) {
+                    currentSearchedFriend.portfolio = currentSearchedFriend.allPortfolio;
+                    renderFriendGalaxy(currentSearchedFriend.portfolio);
+                    friendProfileHint.textContent = '✦ 全部 ' + currentSearchedFriend.portfolio.length + ' 颗星球，点击可查看图片';
+                  }
+                  try { renderFriendPlanet(currentSearchedFriend); } catch (e) {}
+                } else if (result.status === 'rejected') {
+                  currentSearchedFriend.pendingRequest = false;
+                  setConnectButtonState('default');
+                  showMsg('啊哦，该星球好像更愿意待在自己的小空间里TT');
+                } else {
+                  setConnectButtonState('default');
+                }
+              }).catch(function () {
+                setConnectButtonState('default');
+              });
             }
           }).catch(function () {
             setConnectButtonState('default');
           });
+        } else if (friend.isConnected) {
+          setConnectButtonState('connected');
         } else {
           setConnectButtonState('default');
         }
@@ -1474,6 +1555,8 @@
       friendModal.classList.add('active');
       friendModal.setAttribute('aria-hidden', 'false');
     }
+    // 暴露到全局供外层 renderFriendPlanet 的点击事件调用
+    window._openFriendProfile = openFriendProfile;
 
     function closeFriendProfile() {
       if (collisionPlaying) return;
@@ -1483,21 +1566,34 @@
       stopGalaxyAnimation();
     }
 
-    // ===== 断开连接功能 =====
+    // ===== 断开连接 / 拒绝请求功能 =====
     async function handleDisconnect() {
-      if (!currentSearchedFriend || !currentSearchedFriend.isConnected) return;
-      
+      if (!currentSearchedFriend) return;
+
+      // 模式 A: 拒绝 incoming 请求
+      if (currentIncomingRequest && !currentSearchedFriend.isConnected) {
+        try {
+          await sb.respondToRequest(currentIncomingRequest.id, 'rejected');
+          showMsg('啊哦，该星球好像更愿意待在自己的小空间里TT');
+        } catch (e) {
+          console.warn('拒绝请求失败:', e);
+        }
+        currentIncomingRequest = null;
+        setConnectButtonState('default');
+        return;
+      }
+
+      // 模式 B: 正常断开连接
+      if (!currentSearchedFriend.isConnected) return;
       const mySlug = getMySlug();
       if (!mySlug) return;
 
       try {
-        // 尝试从 Supabase 删除连接记录
         await sb.deleteConnection(mySlug, currentSearchedFriend.slug);
       } catch (e) {
         console.warn('断开连接失败（可能离线）:', e);
       }
 
-      // 更新状态
       currentSearchedFriend.isConnected = false;
       removeFriendPlanet(currentSearchedFriend.slug);
       setConnectButtonState('default');
@@ -1512,6 +1608,15 @@
 
     function playPlanetCollision() {
       return new Promise(function (resolve) {
+        // ============ 超时保护：最多 6 秒强制完成，防止动画卡住导致弹窗不关闭 ============
+        const forceResolveTimer = setTimeout(function () {
+          if (animId) cancelAnimationFrame(animId);
+          collisionOverlay.classList.remove('active');
+          collisionOverlay.setAttribute('aria-hidden', 'true');
+          collisionPlaying = false;
+          resolve();
+        }, 6000);
+
         // ============ 初始化 ============
         collisionPlaying = true;
         collisionOverlay.classList.add('active');
@@ -1525,6 +1630,7 @@
         const canvas = collisionCanvas;
         if (!canvas) {
           setTimeout(function () {
+            clearTimeout(forceResolveTimer);
             collisionOverlay.classList.remove('active');
             collisionPlaying = false;
             resolve();
@@ -1831,6 +1937,7 @@
           } else {
             if (collisionCaption) collisionCaption.textContent = '连接成功！✨';
             setTimeout(function () {
+              clearTimeout(forceResolveTimer);
               if (animId) cancelAnimationFrame(animId);
               collisionOverlay.classList.remove('active');
               collisionOverlay.setAttribute('aria-hidden', 'true');
@@ -1844,6 +1951,7 @@
         try {
           requestAnimationFrame(frame);
         } catch (e) {
+          clearTimeout(forceResolveTimer);
           collisionOverlay.classList.remove('active');
           collisionPlaying = false;
           resolve();
@@ -1852,9 +1960,60 @@
     }
 
     async function handleFriendConnect() {
-      // ============ 前置校验 ============
       if (isConnecting || collisionPlaying) return;
       if (!currentSearchedFriend) return;
+
+      // ============ 模式 A: 处理收到的连接申请（接受） ============
+      if (currentIncomingRequest && !currentSearchedFriend.isConnected) {
+        isConnecting = true;
+        setConnectButtonState('pending');
+        const mySlug = getMySlug();
+
+        try {
+          await sb.respondToRequest(currentIncomingRequest.id, 'accepted');
+          if (mySlug) {
+            var connResult = await sb.createConnection(mySlug, currentIncomingRequest.from_slug);
+            if (connResult.error) {
+              console.error('创建连接失败:', connResult.error);
+              throw new Error('创建连接失败');
+            }
+          }
+          currentSearchedFriend.isConnected = true;
+          currentIncomingRequest = null;
+          setConnectButtonState('connected');
+          if (currentSearchedFriend.allPortfolio && currentSearchedFriend.allPortfolio.length > 0) {
+            currentSearchedFriend.portfolio = currentSearchedFriend.allPortfolio;
+            renderFriendGalaxy(currentSearchedFriend.portfolio);
+            friendProfileHint.textContent = '✦ 全部 ' + currentSearchedFriend.portfolio.length + ' 颗星球，点击可查看图片';
+          }
+          try { renderFriendPlanet(currentSearchedFriend); } catch (e) {}
+          try {
+            collisionPlaying = false;
+            await playPlanetCollision();
+            collisionOverlay.classList.remove('active');
+            collisionOverlay.setAttribute('aria-hidden', 'true');
+            friendModal.classList.remove('active');
+            friendModal.setAttribute('aria-hidden', 'true');
+            collisionPlaying = false;
+          } catch (e) {
+            collisionPlaying = false;
+            collisionOverlay.classList.remove('active');
+            collisionOverlay.setAttribute('aria-hidden', 'true');
+            friendModal.classList.remove('active');
+            friendModal.setAttribute('aria-hidden', 'true');
+          }
+          showMsg('✨ 与「' + (currentSearchedFriend.space_id || currentSearchedFriend.id) + '」星域连接成功！');
+        } catch (e) {
+          console.error('接受请求失败:', e);
+          showMsg('信号处理失败，请稍后重试...', true);
+          setConnectButtonState('incoming');
+        } finally {
+          isConnecting = false;
+        }
+        return;
+      }
+
+      // ============ 模式 B: 发送连接申请 ============
       if (currentSearchedFriend.isConnected) return;
       if (currentSearchedFriend.pendingRequest) return;
 
@@ -1868,7 +2027,6 @@
         return;
       }
 
-      // ============ 发送连接申请 ============
       isConnecting = true;
       setConnectButtonState('pending');
 
@@ -1886,12 +2044,8 @@
           showMsg('📡 连接申请已发送！等待「' + (currentSearchedFriend.space_id || currentSearchedFriend.id) + '」回应...');
         }
 
-        // 标记为 pending 状态
         currentSearchedFriend.pendingRequest = true;
-
-        // 开始轮询申请状态（如果还没开始）
         startSentRequestPolling();
-
         isConnecting = false;
       } catch (e) {
         console.error('发送申请失败:', e);
@@ -1919,7 +2073,11 @@
         if (currentSearchedFriend && currentSearchedFriend.pendingRequest && currentSearchedFriend.slug) {
           sb.checkMySentRequest(mySlug, currentSearchedFriend.slug).then(function (result) {
             if (result.status === 'accepted') {
-              // 请求被接受了！
+              // 请求被接受了！需要主动创建连接记录
+              sb.createConnection(mySlug, currentSearchedFriend.slug).catch(function (e) {
+                console.warn('createConnection 失败（可能已被对方创建）:', e);
+              });
+
               currentSearchedFriend.isConnected = true;
               currentSearchedFriend.pendingRequest = false;
               setConnectButtonState('connected');
@@ -1935,7 +2093,7 @@
 
               // 播放连接动画
               try {
-                collisionPlaying = false; // 确保不会冲突
+                collisionPlaying = false;
                 playPlanetCollision().then(function () {
                   collisionOverlay.classList.remove('active');
                   collisionOverlay.setAttribute('aria-hidden', 'true');
@@ -1946,9 +2104,13 @@
                   collisionOverlay.classList.remove('active');
                   collisionOverlay.setAttribute('aria-hidden', 'true');
                   collisionPlaying = false;
+                  friendModal.classList.remove('active');
+                  friendModal.setAttribute('aria-hidden', 'true');
                 });
               } catch (e) {
                 collisionPlaying = false;
+                friendModal.classList.remove('active');
+                friendModal.setAttribute('aria-hidden', 'true');
               }
 
               showMsg('✨ 与「' + (currentSearchedFriend.space_id || currentSearchedFriend.id) + '」星域连接成功！');
@@ -1956,7 +2118,7 @@
               // 请求被拒绝
               currentSearchedFriend.pendingRequest = false;
               setConnectButtonState('default');
-              showMsg('「' + (currentSearchedFriend.space_id || currentSearchedFriend.id) + '」拒绝了你的连接申请', true);
+              showMsg('啊哦，该星球好像更愿意待在自己的小空间里TT');
             }
             // pending → 继续等待
           }).catch(function () {});
@@ -2615,25 +2777,149 @@
       }
     });
 
-    /* ===== 信号接收站模块 ===== */
+    /* ===== 连接状态同步轮询 ===== */
+    // 定时检查已连接的好友是否仍保持连接；同时检测新增连接并在 hero 区显示
+    (function startConnectionSyncPolling() {
+      var mySlug = getMySlug();
+      if (!mySlug) {
+        setTimeout(startConnectionSyncPolling, 8000);
+        return;
+      }
+
+      sb.getAllConnectedFriends(mySlug).then(function (result) {
+        // 查询失败时，停止本次同步（不执行任何移除操作）
+        if (result.error) {
+          console.warn('连接同步查询失败，不移除星星:', result.error);
+          setTimeout(startConnectionSyncPolling, 12000);
+          return;
+        }
+        var latest = result.data || [];
+        // 空数组 + 无错误 = 确实没有连接了，移除所有本地星星
+        if (!latest || latest.length === 0) {
+          var currentSlugs = Object.keys(connectedFriends);
+          currentSlugs.forEach(function (friendSlug) {
+            removeFriendPlanet(friendSlug);
+            if (currentSearchedFriend && currentSearchedFriend.slug === friendSlug) {
+              currentSearchedFriend.isConnected = false;
+              setConnectButtonState('default');
+            }
+          });
+          setTimeout(startConnectionSyncPolling, 10000);
+          return;
+        }
+        var latestMap = {};
+        latest.forEach(function (p) {
+          if (p && p.slug) latestMap[p.slug] = p;
+        });
+
+        var latestSlugs = Object.keys(latestMap);
+        var currentSlugs = Object.keys(connectedFriends);
+
+        // 1) 检测断开的好友（仅在查询有数据时执行）
+        currentSlugs.forEach(function (friendSlug) {
+          if (!latestMap[friendSlug]) {
+            removeFriendPlanet(friendSlug);
+            if (currentSearchedFriend && currentSearchedFriend.slug === friendSlug) {
+              currentSearchedFriend.isConnected = false;
+              setConnectButtonState('default');
+            }
+          }
+        });
+        var pendingAdditions = latestSlugs.filter(function (slug) {
+          return !connectedFriends[slug];
+        });
+
+        if (pendingAdditions.length === 0) {
+          setTimeout(startConnectionSyncPolling, 10000);
+          return;
+        }
+
+        var colors = ['#88ccff', '#ff88cc', '#88ffaa', '#ffcc88', '#ff8888', '#88ffcc', '#cc88ff', '#ffcc66'];
+        var loadIdx = 0;
+
+        pendingAdditions.forEach(function (slug, idx) {
+          var p = latestMap[slug];
+          sb.getPlanets(slug).then(function (planetResult) {
+            var planets = planetResult.data || [];
+            var planetName = '';
+            var planetColor = colors[(Object.keys(connectedFriends).length + idx) % colors.length];
+
+            if (planets && planets.length > 0) {
+              var publicIdx = p.public_planet_index !== null && p.public_planet_index !== undefined
+                ? p.public_planet_index
+                : -1;
+              if (publicIdx >= 0 && planets[publicIdx] && planets[publicIdx].name) {
+                planetName = planets[publicIdx].name;
+              } else if (planets[0] && planets[0].name) {
+                planetName = planets[0].name;
+              }
+            }
+
+            var friendData = {
+              slug: p.slug,
+              space_id: p.space_id || p.slug,
+              id: p.space_id || p.slug,
+              avatar_url: p.avatar_url || 'imgs/3.svg',
+              planetName: planetName,
+              planetColor: planetColor,
+              portfolio: [],
+              allPortfolio: [],
+              isConnected: true,
+              planetCount: planets.length,
+            };
+            renderFriendPlanet(friendData);
+
+            // 如果当前正在查看这个好友，同步更新弹窗状态
+            if (currentSearchedFriend && currentSearchedFriend.slug === slug) {
+              currentSearchedFriend.isConnected = true;
+              setConnectButtonState('connected');
+            }
+
+            loadIdx++;
+            if (loadIdx >= pendingAdditions.length) {
+              setTimeout(startConnectionSyncPolling, 10000);
+            }
+          }).catch(function () {
+            // 即使加载失败，也用基本信息显示
+            var friendData = {
+              slug: p.slug,
+              space_id: p.space_id || p.slug,
+              id: p.space_id || p.slug,
+              avatar_url: p.avatar_url || 'imgs/3.svg',
+              planetName: '',
+              planetColor: colors[(Object.keys(connectedFriends).length + idx) % colors.length],
+              portfolio: [],
+              allPortfolio: [],
+              isConnected: true,
+              planetCount: 0,
+            };
+            renderFriendPlanet(friendData);
+
+            loadIdx++;
+            if (loadIdx >= pendingAdditions.length) {
+              setTimeout(startConnectionSyncPolling, 10000);
+            }
+          });
+        });
+      }).catch(function () {
+        setTimeout(startConnectionSyncPolling, 12000);
+      });
+    })();
+
+    /* ===== 信号接收站模块（信箱） ===== */
     (function () {
       const signalStation = document.getElementById('signal-station');
       const signalTrigger = document.getElementById('signal-station-trigger');
-      const signalPanel = document.getElementById('signal-station-panel');
-      const signalList = document.getElementById('signal-list');
       const signalBadge = document.getElementById('signal-badge');
-      const signalPanelClose = document.getElementById('signal-panel-close');
+
+      if (!signalStation || !signalTrigger) return;
 
       let pollTimer = null;
-      let knownRequestIds = {}; // 已知道的请求ID集合，用于判断新请求
-      let pendingRequests = []; // 当前pending请求列表
-      let processingRequest = false; // 是否正在处理请求（防止重复点击）
-
-      function getMySlug() {
-        return localStorage.getItem('my_galaxy_slug');
-      }
+      let pendingRequestQueue = [];
+      let currentOpenedRequestId = null;
 
       function updateBadge(count) {
+        if (!signalBadge || !signalStation) return;
         signalBadge.textContent = count > 99 ? '99+' : String(count);
         if (count > 0) {
           signalStation.classList.add('has-signal');
@@ -2642,167 +2928,49 @@
         }
       }
 
-      // 渲染单条请求
-      function renderRequestItem(req) {
-        const item = document.createElement('div');
-        item.className = 'signal-item';
-        item.setAttribute('data-request-id', req.id);
+      // 打开第一个待处理请求的好友弹窗
+      function openFirstPendingRequest() {
+        if (pendingRequestQueue.length === 0) return;
+        const req = pendingRequestQueue[0];
+        currentOpenedRequestId = req.id;
 
-        const avatar = document.createElement('img');
-        avatar.className = 'signal-item-avatar';
-        avatar.src = req.from_avatar_url || 'imgs/3.svg';
-        avatar.alt = '申请人头像';
+        const friendData = {
+          slug: req.from_slug,
+          space_id: req.from_space_id,
+          id: req.from_space_id,
+          avatar_url: req.from_avatar_url || 'imgs/3.svg',
+          planetName: '',
+          portfolio: [],
+          allPortfolio: [],
+          isConnected: false,
+        };
 
-        const info = document.createElement('div');
-        info.className = 'signal-item-info';
-
-        const idText = document.createElement('div');
-        idText.className = 'signal-item-id';
-        idText.textContent = req.from_space_id || 'SPACE-????';
-
-        const label = document.createElement('div');
-        label.className = 'signal-item-label';
-        label.textContent = '请求与你建立星域连接';
-
-        info.appendChild(idText);
-        info.appendChild(label);
-
-        const actions = document.createElement('div');
-        actions.className = 'signal-item-actions';
-
-        const acceptBtn = document.createElement('button');
-        acceptBtn.className = 'signal-accept-btn';
-        acceptBtn.type = 'button';
-        acceptBtn.textContent = '接受';
-        acceptBtn.addEventListener('click', function () {
-          handleAcceptRequest(req, item);
-        });
-
-        const rejectBtn = document.createElement('button');
-        rejectBtn.className = 'signal-reject-btn';
-        rejectBtn.type = 'button';
-        rejectBtn.textContent = '拒绝';
-        rejectBtn.addEventListener('click', function () {
-          handleRejectRequest(req, item);
-        });
-
-        actions.appendChild(acceptBtn);
-        actions.appendChild(rejectBtn);
-
-        item.appendChild(avatar);
-        item.appendChild(info);
-        item.appendChild(actions);
-
-        return item;
+        openFriendProfile(friendData, req);
       }
 
-      // 渲染请求列表
-      function renderRequests(requests) {
-        signalList.innerHTML = '';
-        if (!requests || requests.length === 0) {
-          const empty = document.createElement('p');
-          empty.className = 'signal-empty';
-          empty.textContent = '暂无未读信号...';
-          signalList.appendChild(empty);
+      // 点击信箱按钮 → 弹出第一个待处理请求的好友弹窗
+      signalTrigger.addEventListener('click', function () {
+        if (pendingRequestQueue.length > 0) {
+          // 清理背景中的好友卡片、连接线等冗余元素，只保留好友弹窗
+          var detectorResult = document.getElementById('detector-result');
+          if (detectorResult) {
+            detectorResult.innerHTML = '';
+            detectorResult.className = 'detector-result';
+          }
+          var detectorMsg = document.getElementById('detector-msg');
+          if (detectorMsg) {
+            detectorMsg.className = 'detector-msg';
+            detectorMsg.textContent = '';
+          }
+          var oldCanvas = document.querySelector('.connect-line-canvas');
+          if (oldCanvas) oldCanvas.remove();
+          document.querySelectorAll('.connect-particle').forEach(function (el) { el.remove(); });
+
+          openFirstPendingRequest();
         } else {
-          requests.forEach(function (req) {
-            signalList.appendChild(renderRequestItem(req));
-          });
+          showMsg('目前没有待处理的连接请求~');
         }
-      }
-
-      // 接受请求
-      async function handleAcceptRequest(req, item) {
-        if (processingRequest) return;
-        processingRequest = true;
-
-        const acceptBtn = item.querySelector('.signal-accept-btn');
-        const rejectBtn = item.querySelector('.signal-reject-btn');
-        if (acceptBtn) acceptBtn.disabled = true;
-        if (rejectBtn) rejectBtn.disabled = true;
-
-        const mySlug = getMySlug();
-        try {
-          // 1. 更新请求状态为 accepted
-          await sb.respondToRequest(req.id, 'accepted');
-
-          // 2. 创建 connections 表中的连接
-          if (mySlug && req.from_slug) {
-            await sb.createConnection(mySlug, req.from_slug);
-          }
-
-          // 3. 显示状态
-          const actions = item.querySelector('.signal-item-actions');
-          if (actions) {
-            actions.innerHTML = '<span class="signal-item-status accepted">✦ 已接受</span>';
-          }
-
-          // 4. 关闭面板（给一点时间看反馈）
-          setTimeout(function () {
-            signalPanel.classList.remove('open');
-          }, 600);
-
-          // 5. 从列表中移除（稍后重新轮询时会清除）
-          delete knownRequestIds[req.id];
-          pendingRequests = pendingRequests.filter(function (r) { return r.id !== req.id; });
-          updateBadge(pendingRequests.length);
-          renderRequests(pendingRequests);
-
-          // 6. 播放连接动画
-          try {
-            await playPlanetCollision();
-          } catch (e) {}
-
-          // 7. 在 hero 区显示申请人星球
-          const friendData = {
-            slug: req.from_slug,
-            space_id: req.from_space_id,
-            avatar_url: req.from_avatar_url,
-            planetColor: friendPlanetColors[Math.floor(Math.random() * friendPlanetColors.length)],
-            isConnected: true,
-          };
-          try { renderFriendPlanet(friendData); } catch (e) {}
-        } catch (e) {
-          console.error('处理接受请求失败:', e);
-        } finally {
-          processingRequest = false;
-        }
-      }
-
-      // 拒绝请求
-      async function handleRejectRequest(req, item) {
-        if (processingRequest) return;
-        processingRequest = true;
-
-        const acceptBtn = item.querySelector('.signal-accept-btn');
-        const rejectBtn = item.querySelector('.signal-reject-btn');
-        if (acceptBtn) acceptBtn.disabled = true;
-        if (rejectBtn) rejectBtn.disabled = true;
-
-        try {
-          await sb.respondToRequest(req.id, 'rejected');
-
-          const actions = item.querySelector('.signal-item-actions');
-          if (actions) {
-            actions.innerHTML = '<span class="signal-item-status rejected">✕ 已拒绝</span>';
-          }
-        } catch (e) {
-          console.error('处理拒绝请求失败:', e);
-        }
-
-        // 延迟后移除
-        setTimeout(function () {
-          delete knownRequestIds[req.id];
-          pendingRequests = pendingRequests.filter(function (r) { return r.id !== req.id; });
-          updateBadge(pendingRequests.length);
-          renderRequests(pendingRequests);
-          if (pendingRequests.length === 0) {
-            signalPanel.classList.remove('open');
-          }
-        }, 800);
-
-        processingRequest = false;
-      }
+      });
 
       // 轮询检查新请求
       async function pollRequests() {
@@ -2819,73 +2987,45 @@
             return;
           }
 
-          // 检测新请求
-          let hasNew = false;
-          data.forEach(function (req) {
-            if (!knownRequestIds[req.id]) {
-              knownRequestIds[req.id] = true;
-              hasNew = true;
-            }
-          });
-
-          // 移除已不在pending中的旧请求
-          const currentIds = {};
-          data.forEach(function (req) { currentIds[req.id] = true; });
-          Object.keys(knownRequestIds).forEach(function (id) {
-            if (!currentIds[id]) {
-              delete knownRequestIds[id];
-            }
-          });
-
-          pendingRequests = data;
-          updateBadge(pendingRequests.length);
-          renderRequests(pendingRequests);
-
-          // 如果有新请求，自动打开面板
-          if (hasNew && data.length > 0) {
-            signalPanel.classList.add('open');
-            // 新请求时改为更快的轮询
-            if (pollTimer) clearTimeout(pollTimer);
-            pollTimer = setTimeout(pollRequests, 2000);
-            return;
-          }
+          // 队列始终与数据库完全同步（不在轮询层过滤）
+          pendingRequestQueue = data || [];
+          updateBadge(pendingRequestQueue.length);
         } catch (e) {
-          console.warn('轮询请求失败:', e);
+          // 静默失败
         }
 
-        // 根据请求数量调整轮询间隔
-        const interval = pendingRequests.length > 0 ? 2000 : 5000;
-        pollTimer = setTimeout(pollRequests, interval);
+        pollTimer = setTimeout(pollRequests, 5000);
       }
 
-      // 切换面板
-      signalTrigger.addEventListener('click', function () {
-        signalPanel.classList.toggle('open');
-        // 打开面板时立即刷新一次
-        if (signalPanel.classList.contains('open')) {
-          if (pollTimer) clearTimeout(pollTimer);
-          pollRequests();
-        }
-      });
-
-      signalPanelClose.addEventListener('click', function () {
-        signalPanel.classList.remove('open');
-      });
-
-      // 点击面板外的空白区域关闭（面板本身不处理，因为覆盖了整个右侧）
-      document.addEventListener('click', function (e) {
-        if (signalPanel.classList.contains('open')) {
-          if (!signalPanel.contains(e.target) && e.target !== signalTrigger && !signalTrigger.contains(e.target)) {
-            signalPanel.classList.remove('open');
-          }
-        }
-      });
-
-      // 立即启动轮询（延迟2秒等页面初始化完成）
+      // 启动轮询
       setTimeout(function () {
         pollRequests();
       }, 2000);
     })();
+
+    // === 旧面板/列表渲染代码已移除 ===
+    (function () {
+      let pollTimer = null;
+      let knownRequestIds = {};
+      let pendingRequests = [];
+      let processingRequest = false;
+      let panelAutoOpenedForBatch = false;
+
+      // (下方为已失效的旧代码，通过空实现防止解析错误)
+      function renderRequestItem() { return document.createElement('div'); }
+      function renderRequests() {}
+      async function handleAcceptRequest() {}
+      async function handleRejectRequest() {}
+      async function pollRequests() {
+        pollTimer = setTimeout(pollRequests, 999999);
+      }
+
+      setTimeout(function () {
+        if (pollTimer) clearTimeout(pollTimer);
+      }, 500);
+    })();
+
+      // 旧信号站面板代码已由信箱模式替代
   })();
 
 })();

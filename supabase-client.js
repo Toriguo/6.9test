@@ -206,16 +206,23 @@
   async function createConnection(slugA, slugB) {
     const client = getClient();
     const [a, b] = normalizeConnectionPair(slugA, slugB);
-    const existing = await checkConnection(slugA, slugB);
-    if (existing.connected) {
-      return { data: existing.data, alreadyConnected: true, error: null };
+    try {
+      const existing = await checkConnection(slugA, slugB);
+      if (existing.connected) {
+        return { data: existing.data, alreadyConnected: true, error: null };
+      }
+      const result = await withTimeout(
+        client
+          .from(CONNECTIONS_TABLE)
+          .insert({ slug_a: a, slug_b: b })
+          .select()
+          .single(),
+        8000
+      );
+      return { data: result.data || null, error: result.error || null, alreadyConnected: false };
+    } catch (e) {
+      return { data: null, error: e, alreadyConnected: false };
     }
-    const { data, error } = await client
-      .from(CONNECTIONS_TABLE)
-      .insert({ slug_a: a, slug_b: b })
-      .select()
-      .single();
-    return { data, error, alreadyConnected: false };
   }
 
   /**
@@ -232,6 +239,47 @@
     return { error };
   }
 
+  /**
+   * 批量获取当前用户的所有连接好友（含对方 slug 集合）
+   * @param {string} slug - 当前用户 slug
+   * @returns {Promise<{data?: object[], error?: Error>}
+   * 每个元素形如 { slug, space_id, avatar_url }
+   */
+  async function getAllConnectedFriends(slug) {
+    const client = getClient();
+    try {
+      const connResult = await withTimeout(
+        client
+          .from(CONNECTIONS_TABLE)
+          .select('slug_a, slug_b')
+          .or('slug_a.eq.' + slug + ',slug_b.eq.' + slug),
+        8000
+      );
+      const data = connResult.data || [];
+      if (!data || data.length === 0) {
+        return { data: [], error: connResult.error || null };
+      }
+      const friendSlugs = [];
+      data.forEach(function (row) {
+        if (row.slug_a && row.slug_a !== slug) friendSlugs.push(row.slug_a);
+        if (row.slug_b && row.slug_b !== slug) friendSlugs.push(row.slug_b);
+      });
+      if (friendSlugs.length === 0) {
+        return { data: [], error: null };
+      }
+      const profileResult = await withTimeout(
+        client
+          .from(PROFILES_TABLE)
+          .select('slug, space_id, avatar_url, public_planet_index')
+          .in('slug', friendSlugs),
+        8000
+      );
+      return { data: profileResult.data || [], error: profileResult.error || null };
+    } catch (e) {
+      return { data: [], error: e };
+    }
+  }
+
   /* ===== Connection Requests 操作 ===== */
 
   /**
@@ -242,23 +290,33 @@
    */
   async function sendConnectionRequest(fromSlug, toSlug) {
     const client = getClient();
-    // 检查是否已有 pending 请求
-    const { data: existing } = await client
-      .from(CONNECTION_REQUESTS_TABLE)
-      .select('id')
-      .eq('from_slug', fromSlug)
-      .eq('to_slug', toSlug)
-      .eq('status', 'pending')
-      .maybeSingle();
-    if (existing) {
-      return { data: existing, alreadyPending: true, error: null };
+    try {
+      // 检查是否已有 pending 请求
+      const existingResult = await withTimeout(
+        client
+          .from(CONNECTION_REQUESTS_TABLE)
+          .select('id')
+          .eq('from_slug', fromSlug)
+          .eq('to_slug', toSlug)
+          .eq('status', 'pending')
+          .maybeSingle(),
+        8000
+      );
+      if (existingResult.data) {
+        return { data: existingResult.data, alreadyPending: true, error: null };
+      }
+      const insertResult = await withTimeout(
+        client
+          .from(CONNECTION_REQUESTS_TABLE)
+          .insert({ from_slug: fromSlug, to_slug: toSlug, status: 'pending' })
+          .select()
+          .single(),
+        8000
+      );
+      return { data: insertResult.data, error: insertResult.error, alreadyPending: false };
+    } catch (e) {
+      return { data: null, error: e, alreadyPending: false };
     }
-    const { data, error } = await client
-      .from(CONNECTION_REQUESTS_TABLE)
-      .insert({ from_slug: fromSlug, to_slug: toSlug, status: 'pending' })
-      .select()
-      .single();
-    return { data, error, alreadyPending: false };
   }
 
   /**
@@ -268,37 +326,48 @@
    */
   async function getPendingRequests(slug) {
     const client = getClient();
-    const { data, error } = await client
-      .from(CONNECTION_REQUESTS_TABLE)
-      .select('id, from_slug, created_at')
-      .eq('to_slug', slug)
-      .eq('status', 'pending')
-      .order('created_at', { ascending: false });
-    if (error || !data || data.length === 0) {
-      return { data: data || [], error };
-    }
-    // 批量获取所有申请者的 profile 信息
-    const fromSlugs = data.map(function (r) { return r.from_slug; });
-    const { data: profiles, error: profileError } = await client
-      .from(PROFILES_TABLE)
-      .select('slug, space_id, avatar_url')
-      .in('slug', fromSlugs);
-    // 将 profile 信息合并到请求中
-    const profileMap = {};
-    if (profiles) {
+    try {
+      const reqResult = await withTimeout(
+        client
+          .from(CONNECTION_REQUESTS_TABLE)
+          .select('id, from_slug, created_at')
+          .eq('to_slug', slug)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false }),
+        8000
+      );
+      const data = reqResult.data || [];
+      const error = reqResult.error || null;
+      if (error || data.length === 0) {
+        return { data: data, error: error };
+      }
+      // 批量获取所有申请者的 profile 信息
+      const fromSlugs = data.map(function (r) { return r.from_slug; });
+      const profileResult = await withTimeout(
+        client
+          .from(PROFILES_TABLE)
+          .select('slug, space_id, avatar_url')
+          .in('slug', fromSlugs),
+        8000
+      );
+      const profiles = profileResult.data || [];
+      // 将 profile 信息合并到请求中
+      const profileMap = {};
       profiles.forEach(function (p) { profileMap[p.slug] = p; });
+      const result = data.map(function (req) {
+        const profile = profileMap[req.from_slug] || {};
+        return {
+          id: req.id,
+          from_slug: req.from_slug,
+          from_space_id: profile.space_id || 'SPACE-????',
+          from_avatar_url: profile.avatar_url || 'imgs/3.svg',
+          created_at: req.created_at,
+        };
+      });
+      return { data: result, error: profileResult.error || null };
+    } catch (e) {
+      return { data: [], error: e };
     }
-    const result = data.map(function (req) {
-      const profile = profileMap[req.from_slug] || {};
-      return {
-        id: req.id,
-        from_slug: req.from_slug,
-        from_space_id: profile.space_id || 'SPACE-????',
-        from_avatar_url: profile.avatar_url || 'imgs/3.svg',
-        created_at: req.created_at,
-      };
-    });
-    return { data: result, error: profileError };
   }
 
   /**
@@ -307,15 +376,32 @@
    * @param {'accepted'|'rejected'} newStatus
    * @returns {Promise<{data?: object, error?: Error}>}
    */
+  // 数据库操作超时包装器
+  function withTimeout(promise, ms) {
+    return Promise.race([
+      promise,
+      new Promise(function (_, reject) {
+        return setTimeout(function () { return reject(new Error('请求超时（' + ms + 'ms）')); }, ms);
+      })
+    ]);
+  }
+
   async function respondToRequest(requestId, newStatus) {
     const client = getClient();
-    const { data, error } = await client
-      .from(CONNECTION_REQUESTS_TABLE)
-      .update({ status: newStatus, updated_at: new Date().toISOString() })
-      .eq('id', requestId)
-      .select()
-      .single();
-    return { data, error };
+    try {
+      const result = await withTimeout(
+        client
+          .from(CONNECTION_REQUESTS_TABLE)
+          .update({ status: newStatus, updated_at: new Date().toISOString() })
+          .eq('id', requestId)
+          .select()
+          .single(),
+        8000
+      );
+      return result;
+    } catch (e) {
+      return { data: null, error: e };
+    }
   }
 
   /**
@@ -326,18 +412,25 @@
    */
   async function checkMySentRequest(fromSlug, toSlug) {
     const client = getClient();
-    const { data, error } = await client
-      .from(CONNECTION_REQUESTS_TABLE)
-      .select('id, status')
-      .eq('from_slug', fromSlug)
-      .eq('to_slug', toSlug)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error || !data) {
-      return { status: null, requestId: null, error };
+    try {
+      const result = await withTimeout(
+        client
+          .from(CONNECTION_REQUESTS_TABLE)
+          .select('id, status')
+          .eq('from_slug', fromSlug)
+          .eq('to_slug', toSlug)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        8000
+      );
+      if (result.error || !result.data) {
+        return { status: null, requestId: null, error: result.error || null };
+      }
+      return { status: result.data.status, requestId: result.data.id, error: null };
+    } catch (e) {
+      return { status: null, requestId: null, error: e };
     }
-    return { status: data.status, requestId: data.id, error: null };
   }
 
   /* ===== 工具函数 ===== */
@@ -366,6 +459,7 @@
     checkConnection,
     createConnection,
     deleteConnection,
+    getAllConnectedFriends,
     savePlanets,
     getPlanets,
     generateSlug,
