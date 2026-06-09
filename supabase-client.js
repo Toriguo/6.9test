@@ -11,6 +11,7 @@
   const PROFILES_TABLE = 'profiles';
   const PLANETS_TABLE = 'planets';
   const CONNECTIONS_TABLE = 'connections';
+  const CONNECTION_REQUESTS_TABLE = 'connection_requests';
 
   function getClient() {
     if (!window.supabaseClient) {
@@ -231,6 +232,114 @@
     return { error };
   }
 
+  /* ===== Connection Requests 操作 ===== */
+
+  /**
+   * 发送连接申请
+   * @param {string} fromSlug - 申请者 slug
+   * @param {string} toSlug - 被申请者 slug
+   * @returns {Promise<{data?: object, error?: Error, alreadyPending?: boolean}>}
+   */
+  async function sendConnectionRequest(fromSlug, toSlug) {
+    const client = getClient();
+    // 检查是否已有 pending 请求
+    const { data: existing } = await client
+      .from(CONNECTION_REQUESTS_TABLE)
+      .select('id')
+      .eq('from_slug', fromSlug)
+      .eq('to_slug', toSlug)
+      .eq('status', 'pending')
+      .maybeSingle();
+    if (existing) {
+      return { data: existing, alreadyPending: true, error: null };
+    }
+    const { data, error } = await client
+      .from(CONNECTION_REQUESTS_TABLE)
+      .insert({ from_slug: fromSlug, to_slug: toSlug, status: 'pending' })
+      .select()
+      .single();
+    return { data, error, alreadyPending: false };
+  }
+
+  /**
+   * 获取发给某人的所有 pending 请求（含申请人 profile 信息）
+   * @param {string} slug - 被申请者 slug
+   * @returns {Promise<{data?: object[], error?: Error}>}
+   */
+  async function getPendingRequests(slug) {
+    const client = getClient();
+    const { data, error } = await client
+      .from(CONNECTION_REQUESTS_TABLE)
+      .select('id, from_slug, created_at')
+      .eq('to_slug', slug)
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+    if (error || !data || data.length === 0) {
+      return { data: data || [], error };
+    }
+    // 批量获取所有申请者的 profile 信息
+    const fromSlugs = data.map(function (r) { return r.from_slug; });
+    const { data: profiles, error: profileError } = await client
+      .from(PROFILES_TABLE)
+      .select('slug, space_id, avatar_url')
+      .in('slug', fromSlugs);
+    // 将 profile 信息合并到请求中
+    const profileMap = {};
+    if (profiles) {
+      profiles.forEach(function (p) { profileMap[p.slug] = p; });
+    }
+    const result = data.map(function (req) {
+      const profile = profileMap[req.from_slug] || {};
+      return {
+        id: req.id,
+        from_slug: req.from_slug,
+        from_space_id: profile.space_id || 'SPACE-????',
+        from_avatar_url: profile.avatar_url || 'imgs/3.svg',
+        created_at: req.created_at,
+      };
+    });
+    return { data: result, error: profileError };
+  }
+
+  /**
+   * 响应连接申请（接受或拒绝）
+   * @param {number} requestId - 请求 ID
+   * @param {'accepted'|'rejected'} newStatus
+   * @returns {Promise<{data?: object, error?: Error}>}
+   */
+  async function respondToRequest(requestId, newStatus) {
+    const client = getClient();
+    const { data, error } = await client
+      .from(CONNECTION_REQUESTS_TABLE)
+      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .eq('id', requestId)
+      .select()
+      .single();
+    return { data, error };
+  }
+
+  /**
+   * 检查我发给某人的申请状态
+   * @param {string} fromSlug - 我的 slug
+   * @param {string} toSlug - 对方 slug
+   * @returns {Promise<{status?: string|null, requestId?: number|null, error?: Error}>}
+   */
+  async function checkMySentRequest(fromSlug, toSlug) {
+    const client = getClient();
+    const { data, error } = await client
+      .from(CONNECTION_REQUESTS_TABLE)
+      .select('id, status')
+      .eq('from_slug', fromSlug)
+      .eq('to_slug', toSlug)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) {
+      return { status: null, requestId: null, error };
+    }
+    return { status: data.status, requestId: data.id, error: null };
+  }
+
   /* ===== 工具函数 ===== */
 
   /**
@@ -260,5 +369,9 @@
     savePlanets,
     getPlanets,
     generateSlug,
+    sendConnectionRequest,
+    getPendingRequests,
+    respondToRequest,
+    checkMySentRequest,
   };
 })();

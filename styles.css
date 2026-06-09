@@ -2045,6 +2045,15 @@ body {
   cursor: wait;
 }
 
+/* pending 状态：等待回应 */
+.friend-connect-btn.pending {
+  background: rgba(100, 120, 60, 0.5);
+  border-color: rgba(255, 220, 100, 0.5);
+  color: rgba(255, 220, 100, 0.8);
+  cursor: not-allowed;
+  box-shadow: 0 0 12px rgba(255, 220, 100, 0.2);
+}
+
 /* 断开连接按钮容器 */
 .friend-connect-wrap {
   display: flex;
@@ -2145,4 +2154,367 @@ body {
 @keyframes collision-caption-pulse {
   from { opacity: 0.6; }
   to { opacity: 1; }
+}
+
+/* ============================================================
+   九、信号接收站
+   ============================================================ */
+
+.signal-station {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 350;
+  display: flex;
+  align-items: center;
+}
+
+.signal-station-trigger {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  background: linear-gradient(135deg, rgba(10, 10, 50, 0.95), rgba(20, 18, 60, 0.95));
+  border: 2px solid rgba(136, 204, 255, 0.6);
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: box-shadow 0.3s, transform 0.2s, border-color 0.3s;
+  animation: signal-pulse 2.5s ease-in-out infinite;
+  box-shadow: 0 0 12px rgba(136, 204, 255, 0.35), 0 0 25px rgba(80, 120, 255, 0.15);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.signal-station-trigger:hover {
+  border-color: #88ccff;
+  box-shadow: 0 0 20px rgba(136, 204, 255, 0.55), 0 0 40px rgba(80, 120, 255, 0.3);
+  transform: scale(1.08);
+}
+
+.signal-station-trigger:active {
+  transform: scale(0.95);
+}
+
+@keyframes signal-pulse {
+  0%, 100% {
+    box-shadow: 0 0 12px rgba(136, 204, 255, 0.35), 0 0 25px rgba(80, 120, 255, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(136, 204, 255, 0.55), 0 0 40px rgba(80, 120, 255, 0.3);
+  }
+}
+
+/* 有未读信号时的脉冲增强 */
+.signal-station.has-signal .signal-station-trigger {
+  animation: signal-pulse-alert 1.2s ease-in-out infinite;
+  border-color: #ff8855;
+  box-shadow: 0 0 18px rgba(255, 136, 85, 0.55), 0 0 35px rgba(255, 100, 60, 0.3);
+}
+
+@keyframes signal-pulse-alert {
+  0%, 100% {
+    box-shadow: 0 0 14px rgba(255, 136, 85, 0.45), 0 0 28px rgba(255, 100, 60, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 28px rgba(255, 136, 85, 0.75), 0 0 55px rgba(255, 100, 60, 0.45);
+  }
+}
+
+.signal-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.signal-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  background: #ff3355;
+  color: #ffffff;
+  font-family: var(--font-pixel);
+  font-size: 0.32rem;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 0 8px rgba(255, 50, 80, 0.7);
+  display: none;
+}
+
+.signal-station.has-signal .signal-badge {
+  display: block;
+  animation: badge-bounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes badge-bounce {
+  0% { transform: scale(0); }
+  60% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+/* 面板 */
+.signal-station-panel {
+  position: fixed;
+  right: -100%;
+  top: 0;
+  width: 320px;
+  max-width: 90vw;
+  height: 100%;
+  background: linear-gradient(180deg, rgba(8, 8, 40, 0.98), rgba(16, 12, 50, 0.98));
+  border-left: 2px solid rgba(136, 204, 255, 0.5);
+  z-index: 351;
+  display: flex;
+  flex-direction: column;
+  transition: right 0.4s cubic-bezier(0.34, 0.84, 0.42, 1);
+  box-shadow: -5px 0 30px rgba(0, 0, 0, 0.5), -2px 0 15px rgba(136, 204, 255, 0.1);
+  overflow: hidden;
+}
+
+.signal-station-panel.open {
+  right: 0;
+}
+
+.signal-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1rem 0.8rem;
+  border-bottom: 1px solid rgba(136, 204, 255, 0.15);
+  flex-shrink: 0;
+}
+
+.signal-panel-title {
+  font-size: 0.45rem;
+  color: #88ccff;
+  letter-spacing: 2px;
+  text-shadow: 0 0 8px rgba(136, 204, 255, 0.4);
+}
+
+.signal-panel-close {
+  width: 28px;
+  height: 28px;
+  font-family: var(--font-pixel);
+  font-size: 0.5rem;
+  color: #88ccff;
+  background: rgba(10, 10, 40, 0.8);
+  border: 1px solid rgba(136, 204, 255, 0.3);
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.3s, border-color 0.3s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.signal-panel-close:hover {
+  background: rgba(136, 204, 255, 0.15);
+  border-color: rgba(136, 204, 255, 0.6);
+}
+
+.signal-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.signal-empty {
+  text-align: center;
+  font-size: 0.35rem;
+  color: rgba(200, 200, 240, 0.4);
+  letter-spacing: 1px;
+  padding: 2rem 0;
+}
+
+/* 单条信号 */
+.signal-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.6rem 0.7rem;
+  background: linear-gradient(135deg, rgba(10, 10, 50, 0.9), rgba(18, 16, 55, 0.9));
+  border: 1px solid rgba(136, 204, 255, 0.35);
+  border-radius: 6px;
+  position: relative;
+  overflow: hidden;
+  animation: signal-item-in 0.5s cubic-bezier(0.34, 1.4, 0.64, 1) forwards;
+}
+
+@keyframes signal-item-in {
+  from { opacity: 0; transform: translateX(40px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.signal-item::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(136, 204, 255, 0.02) 2px,
+    rgba(136, 204, 255, 0.02) 4px
+  );
+  pointer-events: none;
+  border-radius: 5px;
+}
+
+.signal-item-avatar {
+  width: 40px;
+  height: 52px;
+  object-fit: cover;
+  border: 2px solid rgba(136, 204, 255, 0.5);
+  border-radius: 3px;
+  background: rgba(10, 10, 50, 0.8);
+  flex-shrink: 0;
+}
+
+.signal-item-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.signal-item-id {
+  font-size: 0.4rem;
+  color: #88ccff;
+  letter-spacing: 2px;
+  text-shadow: 0 0 6px rgba(136, 204, 255, 0.3);
+}
+
+.signal-item-label {
+  font-size: 0.3rem;
+  color: rgba(200, 200, 240, 0.5);
+  letter-spacing: 1px;
+}
+
+.signal-item-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+
+.signal-accept-btn,
+.signal-reject-btn {
+  padding: 0.35rem 0.7rem;
+  font-family: var(--font-pixel);
+  font-size: 0.3rem;
+  letter-spacing: 1px;
+  border-radius: 4px;
+  cursor: pointer;
+  border: none;
+  transition: transform 0.15s, box-shadow 0.3s, opacity 0.3s;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.signal-accept-btn {
+  background: linear-gradient(135deg, #88ccff, #66aaff);
+  color: #0a0a2e;
+  box-shadow: 0 0 12px rgba(136, 204, 255, 0.35);
+}
+
+.signal-accept-btn:hover {
+  box-shadow: 0 0 20px rgba(136, 204, 255, 0.55);
+}
+
+.signal-accept-btn:active {
+  transform: scale(0.95);
+}
+
+.signal-reject-btn {
+  background: rgba(60, 60, 100, 0.4);
+  color: rgba(200, 200, 240, 0.6);
+  border: 1px solid rgba(136, 136, 180, 0.3);
+}
+
+.signal-reject-btn:hover {
+  color: #ff8888;
+  border-color: rgba(255, 136, 136, 0.5);
+  background: rgba(100, 40, 40, 0.3);
+}
+
+.signal-reject-btn:active {
+  transform: scale(0.95);
+}
+
+.signal-accept-btn:disabled,
+.signal-reject-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* 状态反馈文字 */
+.signal-item-status {
+  font-size: 0.3rem;
+  letter-spacing: 1px;
+  text-align: center;
+}
+
+.signal-item-status.accepted {
+  color: #88ffaa;
+}
+
+.signal-item-status.rejected {
+  color: #ff8888;
+}
+
+/* 移动端适配 */
+@media (max-width: 767px) {
+  .signal-station-trigger {
+    width: 40px;
+    height: 40px;
+  }
+
+  .signal-icon {
+    font-size: 0.9rem;
+  }
+
+  .signal-station-panel {
+    width: 85vw;
+    max-width: 320px;
+  }
+
+  .signal-panel-title {
+    font-size: 0.38rem;
+  }
+
+  .signal-item {
+    padding: 0.5rem 0.6rem;
+    gap: 0.5rem;
+  }
+
+  .signal-item-avatar {
+    width: 34px;
+    height: 44px;
+  }
+
+  .signal-item-id {
+    font-size: 0.35rem;
+  }
+
+  .signal-accept-btn,
+  .signal-reject-btn {
+    padding: 0.3rem 0.55rem;
+    font-size: 0.28rem;
+  }
 }

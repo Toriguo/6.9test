@@ -183,6 +183,23 @@
     <p class="collision-caption" id="collision-caption">星域共振中……</p>
   </div>
 
+  <!-- 信号接收站 -->
+  <div class="signal-station" id="signal-station">
+    <button class="signal-station-trigger" id="signal-station-trigger" type="button" title="信号接收站">
+      <span class="signal-icon">📡</span>
+      <span class="signal-badge" id="signal-badge">0</span>
+    </button>
+    <div class="signal-station-panel" id="signal-station-panel">
+      <div class="signal-panel-header">
+        <h3 class="signal-panel-title">✦ 星际信号接收站 ✦</h3>
+        <button class="signal-panel-close" id="signal-panel-close" type="button" aria-label="关闭">✕</button>
+      </div>
+      <div class="signal-list" id="signal-list">
+        <p class="signal-empty">暂无未读信号...</p>
+      </div>
+    </div>
+  </div>
+
   <script src="supabase.min.js"></script>
   <script src="supabase-config.js"></script>
   <script src="supabase-client.js"></script>

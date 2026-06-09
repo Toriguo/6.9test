@@ -1372,11 +1372,27 @@
       });
     }
 
-    function setConnectButtonState(isConnected, isLoading) {
-      friendConnectBtn.disabled = isConnected || isLoading || collisionPlaying;
+    function setConnectButtonState(status) {
+      // status: 'default' | 'pending' | 'connected' | 'rejected'
+      var isConnected = status === 'connected';
+      var isPending = status === 'pending';
+      var isRejected = status === 'rejected';
+
+      friendConnectBtn.disabled = isConnected || isPending || collisionPlaying;
       friendConnectBtn.classList.toggle('connected', isConnected);
-      friendConnectBtn.classList.toggle('connecting', isLoading);
-      friendConnectBtn.textContent = isLoading ? '连接中...' : (isConnected ? '✦ 已连接' : '✦ 连接');
+      friendConnectBtn.classList.toggle('pending', isPending);
+      friendConnectBtn.classList.toggle('connecting', false);
+
+      if (isConnected) {
+        friendConnectBtn.textContent = '✦ 已连接';
+      } else if (isPending) {
+        friendConnectBtn.textContent = '等待回应...';
+      } else if (isRejected) {
+        friendConnectBtn.textContent = '✦ 申请连接';
+        friendConnectBtn.disabled = false;
+      } else {
+        friendConnectBtn.textContent = '✦ 申请连接';
+      }
     }
 
     async function checkFriendConnection(friendSlug) {
@@ -1413,7 +1429,44 @@
       }
 
       renderFriendGalaxy(friend.portfolio || []);
-      setConnectButtonState(!!friend.isConnected, false);
+
+      // 检查连接请求状态
+      if (!!friend.isConnected) {
+        setConnectButtonState('connected');
+      } else {
+        // 异步检查是否有 pending 请求
+        var mySlug = getMySlug();
+        if (mySlug && friend.slug) {
+          sb.checkMySentRequest(mySlug, friend.slug).then(function (result) {
+            if (result.status === 'pending') {
+              currentSearchedFriend.pendingRequest = true;
+              setConnectButtonState('pending');
+            } else if (result.status === 'accepted') {
+              currentSearchedFriend.isConnected = true;
+              currentSearchedFriend.pendingRequest = false;
+              setConnectButtonState('connected');
+              // 切换到全部星球
+              if (currentSearchedFriend.allPortfolio && currentSearchedFriend.allPortfolio.length > 0) {
+                currentSearchedFriend.portfolio = currentSearchedFriend.allPortfolio;
+                renderFriendGalaxy(currentSearchedFriend.portfolio);
+              }
+              // 在 hero 区显示星球
+              try { renderFriendPlanet(currentSearchedFriend); } catch (e) {}
+              // 如果请求刚被接受且弹窗开着，开始轮询
+              startSentRequestPolling();
+            } else if (result.status === 'rejected') {
+              currentSearchedFriend.pendingRequest = false;
+              setConnectButtonState('default');
+            } else {
+              setConnectButtonState('default');
+            }
+          }).catch(function () {
+            setConnectButtonState('default');
+          });
+        } else {
+          setConnectButtonState('default');
+        }
+      }
 
       // 启动星轨动画
       startGalaxyAnimation();
@@ -1447,7 +1500,7 @@
       // 更新状态
       currentSearchedFriend.isConnected = false;
       removeFriendPlanet(currentSearchedFriend.slug);
-      setConnectButtonState(false, false);
+      setConnectButtonState('default');
       showMsg('已终止与「' + (currentSearchedFriend.space_id || currentSearchedFriend.id) + '」的连接');
     }
 
@@ -1803,6 +1856,7 @@
       if (isConnecting || collisionPlaying) return;
       if (!currentSearchedFriend) return;
       if (currentSearchedFriend.isConnected) return;
+      if (currentSearchedFriend.pendingRequest) return;
 
       const mySlug = getMySlug();
       if (!mySlug) {
@@ -1814,50 +1868,105 @@
         return;
       }
 
-      // ============ 立刻锁定状态，避免重复触发 ============
-      currentSearchedFriend.isConnected = true;
+      // ============ 发送连接申请 ============
       isConnecting = true;
-      setConnectButtonState(true, false);
+      setConnectButtonState('pending');
 
-      // ============ 后台发送连接请求（3 秒超时，不阻塞动画） ============
       try {
-        const timeoutPromise = new Promise(function (_, reject) {
-          setTimeout(function () { reject(new Error('timeout')); }, 3000);
-        });
-        await Promise.race([
-          sb.createConnection(mySlug, currentSearchedFriend.slug),
-          timeoutPromise
-        ]).catch(function () {});
-      } catch (e) {}
+        const { alreadyPending, error } = await sb.sendConnectionRequest(mySlug, currentSearchedFriend.slug);
+        if (error) {
+          showMsg('信号发送失败，请稍后重试...', true);
+          setConnectButtonState('default');
+          isConnecting = false;
+          return;
+        }
+        if (alreadyPending) {
+          showMsg('你的连接申请已经发送过啦，请耐心等待对方回应~');
+        } else {
+          showMsg('📡 连接申请已发送！等待「' + (currentSearchedFriend.space_id || currentSearchedFriend.id) + '」回应...');
+        }
 
-      // ============ 播放动画（带终极超时保护：最长 6 秒强制结束） ============
-      try {
-        const animPromise = playPlanetCollision();
-        const safetyPromise = new Promise(function (r) { setTimeout(r, 6000); });
-        await Promise.race([animPromise, safetyPromise]);
+        // 标记为 pending 状态
+        currentSearchedFriend.pendingRequest = true;
+
+        // 开始轮询申请状态（如果还没开始）
+        startSentRequestPolling();
+
+        isConnecting = false;
       } catch (e) {
-        // 动画抛错也不影响主流程
-      } finally {
-        // ============ 无论成功失败，都强制清理状态 ============
-        collisionOverlay.classList.remove('active');
-        collisionOverlay.setAttribute('aria-hidden', 'true');
-        friendModal.classList.remove('active');
-        friendModal.setAttribute('aria-hidden', 'true');
-        collisionPlaying = false;
+        console.error('发送申请失败:', e);
+        showMsg('信号发送失败，请稍后重试...', true);
+        setConnectButtonState('default');
+        isConnecting = false;
+      }
+    }
+
+    // ===== 轮询已发送的申请状态 =====
+    let sentRequestPollTimer = null;
+    let sentRequestChecked = {};
+
+    function startSentRequestPolling() {
+      if (sentRequestPollTimer) return; // 已在轮询
+
+      function poll() {
+        var mySlug = getMySlug();
+        if (!mySlug) {
+          sentRequestPollTimer = setTimeout(poll, 5000);
+          return;
+        }
+
+        // 检查当前搜索的好友
+        if (currentSearchedFriend && currentSearchedFriend.pendingRequest && currentSearchedFriend.slug) {
+          sb.checkMySentRequest(mySlug, currentSearchedFriend.slug).then(function (result) {
+            if (result.status === 'accepted') {
+              // 请求被接受了！
+              currentSearchedFriend.isConnected = true;
+              currentSearchedFriend.pendingRequest = false;
+              setConnectButtonState('connected');
+
+              // 切换到全部星球视图
+              if (currentSearchedFriend.allPortfolio && currentSearchedFriend.allPortfolio.length > 0) {
+                currentSearchedFriend.portfolio = currentSearchedFriend.allPortfolio;
+                renderFriendGalaxy(currentSearchedFriend.portfolio);
+              }
+
+              // 在 hero 区显示好友星球
+              try { renderFriendPlanet(currentSearchedFriend); } catch (e) {}
+
+              // 播放连接动画
+              try {
+                collisionPlaying = false; // 确保不会冲突
+                playPlanetCollision().then(function () {
+                  collisionOverlay.classList.remove('active');
+                  collisionOverlay.setAttribute('aria-hidden', 'true');
+                  collisionPlaying = false;
+                  friendModal.classList.remove('active');
+                  friendModal.setAttribute('aria-hidden', 'true');
+                }).catch(function () {
+                  collisionOverlay.classList.remove('active');
+                  collisionOverlay.setAttribute('aria-hidden', 'true');
+                  collisionPlaying = false;
+                });
+              } catch (e) {
+                collisionPlaying = false;
+              }
+
+              showMsg('✨ 与「' + (currentSearchedFriend.space_id || currentSearchedFriend.id) + '」星域连接成功！');
+            } else if (result.status === 'rejected') {
+              // 请求被拒绝
+              currentSearchedFriend.pendingRequest = false;
+              setConnectButtonState('default');
+              showMsg('「' + (currentSearchedFriend.space_id || currentSearchedFriend.id) + '」拒绝了你的连接申请', true);
+            }
+            // pending → 继续等待
+          }).catch(function () {});
+        }
+
+        // 继续轮询
+        sentRequestPollTimer = setTimeout(poll, 3000);
       }
 
-      // ============ 连接成功后：切换到全部星球视图 ============
-      if (currentSearchedFriend.allPortfolio && currentSearchedFriend.allPortfolio.length > 0) {
-        currentSearchedFriend.portfolio = currentSearchedFriend.allPortfolio;
-      }
-
-      // ============ 更新 hero 区行星 + 提示 ============
-      try {
-        renderFriendPlanet(currentSearchedFriend);
-      } catch (e) {}
-
-      showMsg('✨ 与「' + (currentSearchedFriend.space_id || currentSearchedFriend.id) + '」星域连接成功！');
-      isConnecting = false;
+      sentRequestPollTimer = setTimeout(poll, 3000);
     }
 
     friendConnectBtn.addEventListener('click', handleFriendConnect);
@@ -2505,6 +2614,278 @@
         canvas.height = window.innerHeight;
       }
     });
+
+    /* ===== 信号接收站模块 ===== */
+    (function () {
+      const signalStation = document.getElementById('signal-station');
+      const signalTrigger = document.getElementById('signal-station-trigger');
+      const signalPanel = document.getElementById('signal-station-panel');
+      const signalList = document.getElementById('signal-list');
+      const signalBadge = document.getElementById('signal-badge');
+      const signalPanelClose = document.getElementById('signal-panel-close');
+
+      let pollTimer = null;
+      let knownRequestIds = {}; // 已知道的请求ID集合，用于判断新请求
+      let pendingRequests = []; // 当前pending请求列表
+      let processingRequest = false; // 是否正在处理请求（防止重复点击）
+
+      function getMySlug() {
+        return localStorage.getItem('my_galaxy_slug');
+      }
+
+      function updateBadge(count) {
+        signalBadge.textContent = count > 99 ? '99+' : String(count);
+        if (count > 0) {
+          signalStation.classList.add('has-signal');
+        } else {
+          signalStation.classList.remove('has-signal');
+        }
+      }
+
+      // 渲染单条请求
+      function renderRequestItem(req) {
+        const item = document.createElement('div');
+        item.className = 'signal-item';
+        item.setAttribute('data-request-id', req.id);
+
+        const avatar = document.createElement('img');
+        avatar.className = 'signal-item-avatar';
+        avatar.src = req.from_avatar_url || 'imgs/3.svg';
+        avatar.alt = '申请人头像';
+
+        const info = document.createElement('div');
+        info.className = 'signal-item-info';
+
+        const idText = document.createElement('div');
+        idText.className = 'signal-item-id';
+        idText.textContent = req.from_space_id || 'SPACE-????';
+
+        const label = document.createElement('div');
+        label.className = 'signal-item-label';
+        label.textContent = '请求与你建立星域连接';
+
+        info.appendChild(idText);
+        info.appendChild(label);
+
+        const actions = document.createElement('div');
+        actions.className = 'signal-item-actions';
+
+        const acceptBtn = document.createElement('button');
+        acceptBtn.className = 'signal-accept-btn';
+        acceptBtn.type = 'button';
+        acceptBtn.textContent = '接受';
+        acceptBtn.addEventListener('click', function () {
+          handleAcceptRequest(req, item);
+        });
+
+        const rejectBtn = document.createElement('button');
+        rejectBtn.className = 'signal-reject-btn';
+        rejectBtn.type = 'button';
+        rejectBtn.textContent = '拒绝';
+        rejectBtn.addEventListener('click', function () {
+          handleRejectRequest(req, item);
+        });
+
+        actions.appendChild(acceptBtn);
+        actions.appendChild(rejectBtn);
+
+        item.appendChild(avatar);
+        item.appendChild(info);
+        item.appendChild(actions);
+
+        return item;
+      }
+
+      // 渲染请求列表
+      function renderRequests(requests) {
+        signalList.innerHTML = '';
+        if (!requests || requests.length === 0) {
+          const empty = document.createElement('p');
+          empty.className = 'signal-empty';
+          empty.textContent = '暂无未读信号...';
+          signalList.appendChild(empty);
+        } else {
+          requests.forEach(function (req) {
+            signalList.appendChild(renderRequestItem(req));
+          });
+        }
+      }
+
+      // 接受请求
+      async function handleAcceptRequest(req, item) {
+        if (processingRequest) return;
+        processingRequest = true;
+
+        const acceptBtn = item.querySelector('.signal-accept-btn');
+        const rejectBtn = item.querySelector('.signal-reject-btn');
+        if (acceptBtn) acceptBtn.disabled = true;
+        if (rejectBtn) rejectBtn.disabled = true;
+
+        const mySlug = getMySlug();
+        try {
+          // 1. 更新请求状态为 accepted
+          await sb.respondToRequest(req.id, 'accepted');
+
+          // 2. 创建 connections 表中的连接
+          if (mySlug && req.from_slug) {
+            await sb.createConnection(mySlug, req.from_slug);
+          }
+
+          // 3. 显示状态
+          const actions = item.querySelector('.signal-item-actions');
+          if (actions) {
+            actions.innerHTML = '<span class="signal-item-status accepted">✦ 已接受</span>';
+          }
+
+          // 4. 关闭面板（给一点时间看反馈）
+          setTimeout(function () {
+            signalPanel.classList.remove('open');
+          }, 600);
+
+          // 5. 从列表中移除（稍后重新轮询时会清除）
+          delete knownRequestIds[req.id];
+          pendingRequests = pendingRequests.filter(function (r) { return r.id !== req.id; });
+          updateBadge(pendingRequests.length);
+          renderRequests(pendingRequests);
+
+          // 6. 播放连接动画
+          try {
+            await playPlanetCollision();
+          } catch (e) {}
+
+          // 7. 在 hero 区显示申请人星球
+          const friendData = {
+            slug: req.from_slug,
+            space_id: req.from_space_id,
+            avatar_url: req.from_avatar_url,
+            planetColor: friendPlanetColors[Math.floor(Math.random() * friendPlanetColors.length)],
+            isConnected: true,
+          };
+          try { renderFriendPlanet(friendData); } catch (e) {}
+        } catch (e) {
+          console.error('处理接受请求失败:', e);
+        } finally {
+          processingRequest = false;
+        }
+      }
+
+      // 拒绝请求
+      async function handleRejectRequest(req, item) {
+        if (processingRequest) return;
+        processingRequest = true;
+
+        const acceptBtn = item.querySelector('.signal-accept-btn');
+        const rejectBtn = item.querySelector('.signal-reject-btn');
+        if (acceptBtn) acceptBtn.disabled = true;
+        if (rejectBtn) rejectBtn.disabled = true;
+
+        try {
+          await sb.respondToRequest(req.id, 'rejected');
+
+          const actions = item.querySelector('.signal-item-actions');
+          if (actions) {
+            actions.innerHTML = '<span class="signal-item-status rejected">✕ 已拒绝</span>';
+          }
+        } catch (e) {
+          console.error('处理拒绝请求失败:', e);
+        }
+
+        // 延迟后移除
+        setTimeout(function () {
+          delete knownRequestIds[req.id];
+          pendingRequests = pendingRequests.filter(function (r) { return r.id !== req.id; });
+          updateBadge(pendingRequests.length);
+          renderRequests(pendingRequests);
+          if (pendingRequests.length === 0) {
+            signalPanel.classList.remove('open');
+          }
+        }, 800);
+
+        processingRequest = false;
+      }
+
+      // 轮询检查新请求
+      async function pollRequests() {
+        const mySlug = getMySlug();
+        if (!mySlug) {
+          pollTimer = setTimeout(pollRequests, 5000);
+          return;
+        }
+
+        try {
+          const { data, error } = await sb.getPendingRequests(mySlug);
+          if (error || !data) {
+            pollTimer = setTimeout(pollRequests, 5000);
+            return;
+          }
+
+          // 检测新请求
+          let hasNew = false;
+          data.forEach(function (req) {
+            if (!knownRequestIds[req.id]) {
+              knownRequestIds[req.id] = true;
+              hasNew = true;
+            }
+          });
+
+          // 移除已不在pending中的旧请求
+          const currentIds = {};
+          data.forEach(function (req) { currentIds[req.id] = true; });
+          Object.keys(knownRequestIds).forEach(function (id) {
+            if (!currentIds[id]) {
+              delete knownRequestIds[id];
+            }
+          });
+
+          pendingRequests = data;
+          updateBadge(pendingRequests.length);
+          renderRequests(pendingRequests);
+
+          // 如果有新请求，自动打开面板
+          if (hasNew && data.length > 0) {
+            signalPanel.classList.add('open');
+            // 新请求时改为更快的轮询
+            if (pollTimer) clearTimeout(pollTimer);
+            pollTimer = setTimeout(pollRequests, 2000);
+            return;
+          }
+        } catch (e) {
+          console.warn('轮询请求失败:', e);
+        }
+
+        // 根据请求数量调整轮询间隔
+        const interval = pendingRequests.length > 0 ? 2000 : 5000;
+        pollTimer = setTimeout(pollRequests, interval);
+      }
+
+      // 切换面板
+      signalTrigger.addEventListener('click', function () {
+        signalPanel.classList.toggle('open');
+        // 打开面板时立即刷新一次
+        if (signalPanel.classList.contains('open')) {
+          if (pollTimer) clearTimeout(pollTimer);
+          pollRequests();
+        }
+      });
+
+      signalPanelClose.addEventListener('click', function () {
+        signalPanel.classList.remove('open');
+      });
+
+      // 点击面板外的空白区域关闭（面板本身不处理，因为覆盖了整个右侧）
+      document.addEventListener('click', function (e) {
+        if (signalPanel.classList.contains('open')) {
+          if (!signalPanel.contains(e.target) && e.target !== signalTrigger && !signalTrigger.contains(e.target)) {
+            signalPanel.classList.remove('open');
+          }
+        }
+      });
+
+      // 立即启动轮询（延迟2秒等页面初始化完成）
+      setTimeout(function () {
+        pollRequests();
+      }, 2000);
+    })();
   })();
 
 })();
