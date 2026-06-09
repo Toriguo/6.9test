@@ -251,15 +251,15 @@
 
   function showPreview(src) {
     previewImg.src = src;
-    previewModal.style.display = 'flex';
+    previewModal.classList.add('active');
   }
 
   previewClose.addEventListener('click', function () {
-    previewModal.style.display = 'none';
+    previewModal.classList.remove('active');
   });
 
   previewModal.addEventListener('click', function (e) {
-    if (e.target === previewModal) previewModal.style.display = 'none';
+    if (e.target === previewModal) previewModal.classList.remove('active');
   });
 
   addPlanetBtn.addEventListener('click', function () {

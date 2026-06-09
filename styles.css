@@ -229,8 +229,8 @@ body {
   z-index: 9;
 }
 
-/* ===== 好友行星轨道（hero区） ===== */
-.friend-planets-orbit {
+/* ===== 好友星星（hero区） ===== */
+.friend-stars-orbit {
   position: absolute;
   top: 0;
   left: 0;
@@ -240,64 +240,87 @@ body {
   z-index: 12;
 }
 
-.friend-planet-node {
+.friend-star-node {
   position: absolute;
-  width: 40px;
-  height: 40px;
+  width: 22px;
+  height: 22px;
   pointer-events: auto;
   cursor: pointer;
   transform: translate(-50%, -50%);
-  animation: friend-planet-orbit 18s linear infinite, friend-planet-enter 0.8s cubic-bezier(0.17, 0.67, 0.28, 1.39) both;
+  animation: star-twinkle 2s ease-in-out infinite alternate, star-enter 0.6s cubic-bezier(0.17, 0.67, 0.28, 1.39) both;
+  z-index: 13;
 }
 
-.friend-planet-node:hover {
-  filter: brightness(1.3);
-}
-
-.friend-planet-glow {
+/* 四芒星光（十字光线） */
+.friend-star-node::before {
+  content: '';
   position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 100%;
-  height: 100%;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background:
+    linear-gradient(to right, transparent 44%, var(--star-color, #88ccff) 48%, var(--star-color, #88ccff) 52%, transparent 56%),
+    linear-gradient(to bottom, transparent 44%, var(--star-color, #88ccff) 48%, var(--star-color, #88ccff) 52%, transparent 56%);
+  opacity: 0.7;
+  border-radius: 1px;
+}
+
+/* 星核（亮白中心点） */
+.friend-star-node::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 5px; height: 5px;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  background: radial-gradient(circle, var(--planet-color) 0%, transparent 70%);
-  box-shadow: 0 0 20px var(--planet-color), 0 0 40px var(--planet-color);
-  pointer-events: none;
-  transition: all 0.3s ease;
+  background: #ffffff;
+  box-shadow: 0 0 6px 2px var(--star-color, #88ccff), 0 0 12px 1px var(--star-color, #88ccff);
 }
 
-.friend-planet-node:hover .friend-planet-glow {
-  box-shadow: 0 0 28px var(--planet-color), 0 0 60px var(--planet-color);
-  width: 120%;
-  height: 120%;
+.friend-star-node:hover {
+  filter: brightness(1.6);
 }
 
-@keyframes friend-planet-enter {
+.friend-star-node:hover::before {
+  opacity: 1;
+}
+
+.friend-star-node:hover::after {
+  box-shadow: 0 0 10px 3px var(--star-color, #88ccff), 0 0 20px 3px var(--star-color, #88ccff);
+}
+
+@keyframes star-enter {
   0% {
-    transform: translate(-50%, -50%) scale(0);
+    transform: translate(-50%, -50%) scale(0) rotate(45deg);
     opacity: 0;
   }
   60% {
-    transform: translate(-50%, -50%) scale(1.3);
+    transform: translate(-50%, -50%) scale(1.4) rotate(0deg);
     opacity: 1;
   }
   100% {
-    transform: translate(-50%, -50%) scale(1);
+    transform: translate(-50%, -50%) scale(1) rotate(0deg);
     opacity: 1;
   }
 }
 
-@keyframes friend-planet-orbit {
-  0%, 100% { margin-top: 0; }
-  50% { margin-top: -4px; }
+@keyframes star-twinkle {
+  0% {
+    opacity: 0.5;
+    filter: brightness(0.8);
+  }
+  50% {
+    opacity: 1;
+    filter: brightness(1);
+  }
+  100% {
+    opacity: 0.7;
+    filter: brightness(0.9);
+  }
 }
 
 @media (min-width: 768px) {
-  .friend-planet-node {
-    width: 50px;
-    height: 50px;
+  .friend-star-node {
+    width: 28px;
+    height: 28px;
   }
 }
 

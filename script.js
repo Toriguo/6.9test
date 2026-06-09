@@ -1059,23 +1059,22 @@
       return localStorage.getItem('my_galaxy_slug');
     }
 
-    // ===== hero 区好友行星管理 =====
-    function computeFriendPlanetPosition(index, total) {
-      // 在 hero 区的一个大轨道上均匀分布好友行星
+    // ===== hero 区好友星星管理 =====
+    function computeFriendStarPosition(index, total) {
       const orbit = friendPlanetsOrbit;
       if (!orbit) return { left: '50%', top: '50%' };
       const rect = orbit.getBoundingClientRect();
       const cx = rect.width / 2;
       const cy = rect.height / 2;
-      // 椭圆轨道（占据 hero 中间区域）
-      const radiusX = Math.min(rect.width * 0.38, 260);
-      const radiusY = Math.min(rect.height * 0.42, 280);
-      // 从 0 度开始均匀分布
+      // 星星散布在整个 hero 区域，偏向上方
+      const radiusX = Math.min(rect.width * 0.42, 300);
+      const radiusY = Math.min(rect.height * 0.35, 240);
       const angle = (index / Math.max(total, 1)) * Math.PI * 2 - Math.PI / 2;
-      // 加上一点随机偏移，避免太整齐
-      const jitter = (Math.random() - 0.5) * 20;
-      const px = cx + Math.cos(angle) * radiusX + jitter;
-      const py = cy + Math.sin(angle) * radiusY + jitter;
+      // 随机偏移让星星不那么整齐
+      const jitterX = ((Math.sin(index * 3.7) * 30) + (Math.cos(index * 2.1) * 25));
+      const jitterY = ((Math.cos(index * 1.7) * 20) + (Math.sin(index * 4.3) * 15));
+      const px = cx + Math.cos(angle) * radiusX + jitterX;
+      const py = cy + Math.sin(angle) * radiusY + jitterY;
       return {
         left: (px / rect.width * 100) + '%',
         top: (py / rect.height * 100) + '%'
@@ -1085,29 +1084,21 @@
     function renderFriendPlanet(friendData) {
       if (!friendPlanetsOrbit) return;
       if (!friendData || !friendData.slug) return;
-      // 已经有了就不重复添加
       if (friendPlanetsOrbit.querySelector('[data-friend-slug="' + friendData.slug + '"]')) return;
 
       const node = document.createElement('div');
-      node.className = 'friend-planet-node';
+      node.className = 'friend-star-node';
       node.setAttribute('data-friend-slug', friendData.slug);
       node.title = '点击查看「' + (friendData.space_id || friendData.id) + '」';
+      node.style.setProperty('--star-color', friendData.planetColor || '#88ccff');
 
-      const glow = document.createElement('div');
-      glow.className = 'friend-planet-glow';
-      glow.style.setProperty('--planet-color', friendData.planetColor || '#88ccff');
-      node.appendChild(glow);
-
-      // 计算位置并放置
       const total = Object.keys(connectedFriends).length + 1;
-      const pos = computeFriendPlanetPosition(Object.keys(connectedFriends).length, total);
+      const pos = computeFriendStarPosition(Object.keys(connectedFriends).length, total);
       node.style.left = pos.left;
       node.style.top = pos.top;
 
       node.addEventListener('click', function () {
-        // 点击打开好友主页
         if (friendModal && friendData) {
-          // 复用 friendData，确保连接状态正确
           openFriendProfile(Object.assign({}, friendData, { isConnected: true }));
         }
       });
@@ -1115,7 +1106,6 @@
       friendPlanetsOrbit.appendChild(node);
       connectedFriends[friendData.slug] = friendData;
 
-      // 重新布局已有行星（避免重叠）
       repositionFriendPlanets();
     }
 
@@ -1129,10 +1119,10 @@
 
     function repositionFriendPlanets() {
       if (!friendPlanetsOrbit) return;
-      const nodes = friendPlanetsOrbit.querySelectorAll('.friend-planet-node');
+      const nodes = friendPlanetsOrbit.querySelectorAll('.friend-star-node');
       const total = nodes.length;
       nodes.forEach(function (node, i) {
-        const pos = computeFriendPlanetPosition(i, total);
+        const pos = computeFriendStarPosition(i, total);
         node.style.left = pos.left;
         node.style.top = pos.top;
       });
